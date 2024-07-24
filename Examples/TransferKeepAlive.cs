@@ -9,61 +9,20 @@ using Substrate.NetApi.Model.Types;
 using Substrate.NetApi.Model.Types.Base;
 using Substrate.NetApi.Model.Types.Primitive;
 using Substrate.Vara.NET.NetApiExt.Generated.Storage;
-using Substrate.Vara.NET.NetApiExt.Generated.Model.gear_core.ids;
-using Substrate.Vara.NET.NetApiExt.Generated.Model.pallet_balances;
 using VaraExt = Substrate.Vara.NET.NetApiExt.Generated;
-
-using Unity.Collections.LowLevel.Unsafe;
 using Substrate.Vara.NET.NetApiExt.Generated.Model.sp_core.crypto;
-using UnityEditor;
-using Substrate.Vara.NET.NetApiExt.Generated.Model.frame_support.traits.tokens.misc;
-
-
-
 
 public class TransferKeepAlive : MonoBehaviour
 {
-    private VaraExt.SubstrateClientExt _clientvara;
-    private string url;
+    private VaraExt.SubstrateClientExt _clientvara; // Substrate client to interact with the Vara network
+    private string url; // Test network node URL
 
-    public static MiniSecret MiniSecretBob
-    {
-        get
-        {
-            var bytes = Utils.HexToByteArray("0x397aee0b14f2f82b2ff0b99d901c1e7a76dc80d65ac1a5f9c7e222b04cb1e973");
-            if (bytes == null || bytes.Length == 0)
-            {
-                throw new ArgumentException("HexToByteArray returned null or empty array");
-            }
-            return new MiniSecret(bytes, ExpandMode.Ed25519);
-        }
-    }
-
-    public static Account Bob
-    {
-        get
-        {
-            var secret = MiniSecretBob.ExpandToSecret().ToBytes();
-            var publicKey = MiniSecretBob.GetPair().Public.Key;
-
-            if (secret == null || secret.Length == 0)
-            {
-                throw new ArgumentException("ExpandToSecret returned null or empty array");
-            }
-            if (publicKey == null || publicKey.Length == 0)
-            {
-                throw new ArgumentException("GetPair().Public.Key returned null or empty array");
-            }
-
-            return Account.Build(KeyType.Sr25519, secret, publicKey);
-        }
-    }
-
+    // Property to get Alice's MiniSecret key
     public static MiniSecret MiniSecretAlice
     {
         get
         {
-            var bytes = Utils.HexToByteArray("0x496f9222372eca011351630ad276c7d44768a593cecea73685299e06acef8c0a");
+            var bytes = Utils.HexToByteArray("496f9222372eca011351630ad276c7d44768a593cecea73685299e06acef8c0a");
             if (bytes == null || bytes.Length == 0)
             {
                 throw new ArgumentException("HexToByteArray returned null or empty array");
@@ -72,6 +31,7 @@ public class TransferKeepAlive : MonoBehaviour
         }
     }
 
+    // Property to get Alice's account
     public static Account Alice
     {
         get
@@ -92,7 +52,6 @@ public class TransferKeepAlive : MonoBehaviour
         }
     }
 
-
     // Start is called before the first frame update
     async void Start()
     {
@@ -111,35 +70,39 @@ public class TransferKeepAlive : MonoBehaviour
             // Log a message indicating that the client is connected
             Debug.Log("Client is connected.");
 
+            // Define the amount to transfer
+            var amount = new BaseCom<U128>(4000000000000);
 
-
-            string bobPublicKeyHex = "397aee0b14f2f82b2ff0b99d901c1e7a76dc80d65ac1a5f9c7e222b04cb1e973";
-            byte[] bobPublicKey = Utils.HexToByteArray(bobPublicKeyHex);
+            // Create the recipient account
             var account32 = new AccountId32();
-            account32.Create(bobPublicKey);
+            account32.Create("0xe4fa3b466792dcd7e58f5d8d49bc4631b5eec3a9ebe48ffe79f859dadf76cb71");
             var multiAddress = new VaraExt.Model.sp_runtime.multiaddress.EnumMultiAddress();
             multiAddress.Create(VaraExt.Model.sp_runtime.multiaddress.MultiAddress.Id, account32);
 
+            // Vara Account (Alice's account)
+            var aliceaccount32 = new AccountId32();
+            aliceaccount32.Create("0x96bc6c65c1a0579886003e9c796ac1a9a9e9c4abc7b74d3b1cf399aaf35d7139");
 
+            // Get the parameters needed to query account storage
+            string parameters = SystemStorage.AccountParams(aliceaccount32);
 
-            var amount = new BaseCom<U128>(10000000000000);
+            // Query the account info from the storage asynchronously
+            var accountInfo = await _clientvara.GetStorageAsync<VaraExt.Model.frame_system.AccountInfo>(parameters, null, CancellationToken.None);
 
-            // Enviar la transacción
-            // Balance Calls
+            // Log the free balance of the account
+            Debug.Log($"Balance: {accountInfo.Data.Free}");
+
+            // Prepare the transferKeepAlive method call
             var transferKeepAlive = BalancesCalls.TransferKeepAlive(multiAddress, amount);
 
-            Debug.Log($"Extrinsic submitted : {transferKeepAlive}");
-            Console.WriteLine($"Transaction : {transferKeepAlive}");
+            Debug.Log($"Extrinsic submitted: {transferKeepAlive}");
 
+            uint lifeTime = 64; // Set the lifetime for the extrinsic
 
-            // Enviar la transacción
-            uint lifetime = 64; // Lifetime in blocks
+            // Send the extrinsic to the network and watch its status
+            var sendExtrinsic = await _clientvara.Author.SubmitAndWatchExtrinsicAsync(ExtrinsicStatusCallback, transferKeepAlive, Alice, ChargeTransactionPayment.Default(), lifeTime);
 
-            Hash extrinsic = await _clientvara.Author.SubmitExtrinsicAsync(transferKeepAlive, Alice, ChargeTransactionPayment.Default(), lifetime, CancellationToken.None);
-
-
-            // Log the retrieved data to the debug console and the standard console
-            Debug.Log($"Extrinsic: {extrinsic}");
+            Debug.Log($"extrinsic=> {sendExtrinsic}");
         }
         else
         {
@@ -148,18 +111,14 @@ public class TransferKeepAlive : MonoBehaviour
         }
     }
 
-    
-  static byte[] HexToByteArray(string hex)
-  {
-    int NumberChars = hex.Length;
-    byte[] bytes = new byte[NumberChars / 2];
-    for (int i = 0; i < NumberChars; i += 2)
+    // Define the callback method for extrinsic status
+    private void ExtrinsicStatusCallback(string subscriptionId, ExtrinsicStatus status)
     {
-      bytes[i / 2] = Convert.ToByte(hex.Substring(i, 2), 16);
+        Debug.Log($"Subscription ID: {subscriptionId}");
+        Debug.Log($"Extrinsic Status: {status}");
     }
-    return bytes;
-  }
 
+    // Update is called once per frame
     void Update()
     {
         // You can add code here to be executed in each frame
